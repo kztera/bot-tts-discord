@@ -1,6 +1,5 @@
 use std::{
-    collections::BTreeMap,
-    sync::{Arc, OnceLock, atomic::AtomicBool},
+    sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
 
@@ -11,8 +10,8 @@ use poise::serenity_prelude as serenity;
 use serenity::small_fixed_array::FixedString;
 
 use tts_core::{
-    analytics, create_db_handler, database,
-    structs::{Data, PollyVoice, RegexCache, Result, TTSMode},
+    analytics, create_db_handler,
+    structs::{Data, RegexCache, Result, TTSMode},
 };
 use tts_events::EventHandler;
 use tts_tasks::Looper as _;
@@ -71,12 +70,7 @@ async fn main_(start_time: std::time::SystemTime) -> Result<()> {
         guild_voice_db,
         nickname_db,
         gtts_voices,
-        espeak_voices,
-        gcloud_voices,
-        polly_voices,
-        translation_languages,
         shard_count,
-        premium_user,
     ) = tokio::try_join!(
         get_webhooks(&http, config.webhooks),
         create_db_handler!(pool.clone(), "guilds", "guild_id"),
@@ -85,19 +79,7 @@ async fn main_(start_time: std::time::SystemTime) -> Result<()> {
         create_db_handler!(pool.clone(), "guild_voice", "guild_id", "mode"),
         create_db_handler!(pool.clone(), "nicknames", "guild_id", "user_id"),
         fetch_voices(&reqwest, tts_service(), auth_key, TTSMode::gTTS),
-        fetch_voices(&reqwest, tts_service(), auth_key, TTSMode::eSpeak),
-        fetch_voices(&reqwest, tts_service(), auth_key, TTSMode::gCloud),
-        fetch_voices::<Vec<PollyVoice>>(&reqwest, tts_service(), auth_key, TTSMode::Polly),
-        fetch_translation_languages(&reqwest, tts_service(), auth_key),
         async { Ok(http.get_bot_gateway().await?.shards) },
-        async {
-            let res = serenity::UserId::new(802632257658683442)
-                .to_user(&http)
-                .await?;
-
-            println!("Loaded premium user");
-            Ok(res)
-        }
     )?;
 
     println!("Setting up webhook logging");
@@ -129,19 +111,16 @@ async fn main_(start_time: std::time::SystemTime) -> Result<()> {
             .build(),
 
         gtts_voices,
-        espeak_voices,
-        translation_languages,
-        gcloud_voices: prepare_gcloud_voices(gcloud_voices),
-        polly_voices: polly_voices
-            .into_iter()
-            .map(|v| (v.id.clone(), v))
-            .collect::<BTreeMap<_, _>>(),
+        espeak_voices: Default::default(),
+        translation_languages: Default::default(),
+        gcloud_voices: Default::default(),
+        polly_voices: Default::default(),
 
         config: config.main,
         premium_config: config.premium,
         website_info: Mutex::new(config.website_info),
         reqwest,
-        premium_avatar_url: FixedString::from_string_trunc(premium_user.face()),
+        premium_avatar_url: FixedString::default(),
         analytics,
         webhooks,
         start_time,
@@ -178,7 +157,6 @@ async fn main_(start_time: std::time::SystemTime) -> Result<()> {
         ..poise::FrameworkOptions::default()
     };
 
-    let data_clone = Arc::clone(&data);
     let mut client = serenity::ClientBuilder::new_with_http(token, http, tts_events::get_intents())
         .framework(Box::new(poise::Framework::new(framework_options)))
         .event_handler(Arc::new(EventHandler))

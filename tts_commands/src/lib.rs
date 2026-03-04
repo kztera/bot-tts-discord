@@ -15,7 +15,6 @@ mod help;
 mod main_;
 mod other;
 mod owner;
-mod premium;
 mod settings;
 
 const REQUIRED_SETUP_PERMISSIONS: serenity::Permissions =
@@ -31,7 +30,6 @@ pub fn commands() -> Vec<Command> {
         .into_iter()
         .chain(other::commands())
         .chain(settings::commands())
-        .chain(premium::commands())
         .chain(owner::commands())
         .chain(help::commands())
         .collect()
@@ -114,8 +112,8 @@ pub async fn try_strip_prefix<'a>(
     message: &'a serenity::Message,
 ) -> Result<Option<(&'a str, &'a str)>> {
     let Some(guild_id) = message.guild_id else {
-        if message.content.starts_with('-') {
-            return Ok(Some(message.content.split_at("-".len())));
+        if message.content.starts_with('^') {
+            return Ok(Some(message.content.split_at("^".len())));
         }
         return Ok(None);
     };

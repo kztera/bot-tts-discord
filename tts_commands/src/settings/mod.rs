@@ -1273,12 +1273,11 @@ async fn list_gcloud_voices(ctx: &Context<'_>) -> Result<(String, Vec<String>)> 
     Ok((format!("{lang} {variant} ({gender})"), pages))
 }
 
-pub fn commands() -> [Command; 5] {
+pub fn commands() -> [Command; 4] {
     [
         settings(),
         setup::setup(),
         voices(),
-        translation_languages(),
         poise::Command {
             subcommands: vec![
                 poise::Command {
@@ -1287,27 +1286,8 @@ pub fn commands() -> [Command; 5] {
                 },
                 xsaid(),
                 autojoin(),
-                required_role(),
                 voice(),
-                server_voice(),
-                mode(),
-                server_mode(),
-                msg_length(),
-                botignore(),
-                translation(),
-                translation_lang(),
-                speaking_rate(),
                 nick(),
-                repeated_characters(),
-                audience_ignore(),
-                require_voice(),
-                required_prefix(),
-                command_prefix(),
-                text_in_voice(),
-                skip_emoji(),
-                owner::block(),
-                owner::bot_ban(),
-                owner::gtts_disabled(),
             ],
             ..set()
         },

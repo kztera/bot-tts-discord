@@ -1,40 +1,18 @@
 use aformat::{aformat, astr};
 use anyhow::Error;
-use num_format::{Locale, ToFormattedString};
 
 use poise::{
     CreateReply,
-    serenity_prelude::{self as serenity, Mentionable as _, builder::*},
+    serenity_prelude::{self as serenity, builder::*},
 };
 
 use aformat::ToArrayString;
 use tts_core::{
-    common::{build_invite_components, fetch_audio, prepare_url},
-    constants::OPTION_SEPERATORS,
+    common::{fetch_audio, prepare_url},
     opt_ext::OptionTryUnwrap,
-    require_guild,
-    structs::{ApplicationContext, Command, CommandResult, Context, IsPremium, TTSMode},
+    structs::{Command, CommandResult, Context, IsPremium, TTSMode},
     traits::PoiseContextExt as _,
 };
-
-/// Shows how long TTS Bot has been online
-#[poise::command(
-    category = "Extra Commands",
-    prefix_command,
-    slash_command,
-    required_bot_permissions = "SEND_MESSAGES"
-)]
-pub async fn uptime(ctx: Context<'_>) -> CommandResult {
-    let start_time = ctx.data().start_time;
-    let time_since_start = start_time.duration_since(std::time::UNIX_EPOCH)?.as_secs();
-    let msg = {
-        let current_user = ctx.cache().current_user().mention();
-        aformat!("{current_user} has been up since: <t:{time_since_start}:R>")
-    };
-
-    ctx.say(&*msg).await?;
-    Ok(())
-}
 
 /// Generates TTS and sends it in the current text channel!
 #[poise::command(
@@ -160,187 +138,6 @@ async fn tts_(ctx: Context<'_>, author: &serenity::User, message: &str) -> Comma
     Ok(())
 }
 
-#[poise::command(
-    category = "Extra Commands",
-    hide_in_help,
-    context_menu_command = "Speak with their voice!"
-)]
-pub async fn tts_speak_as(
-    ctx: ApplicationContext<'_>,
-    message: serenity::Message,
-) -> CommandResult {
-    tts_(ctx.into(), &message.author, &message.content).await
-}
-
-#[poise::command(
-    category = "Extra Commands",
-    hide_in_help,
-    context_menu_command = "Speak with your voice!"
-)]
-pub async fn tts_speak(ctx: ApplicationContext<'_>, message: serenity::Message) -> CommandResult {
-    tts_(ctx.into(), &ctx.interaction.user, &message.content).await
-}
-
-/// Shows various different stats
-#[poise::command(
-    category = "Extra Commands",
-    prefix_command,
-    slash_command,
-    required_bot_permissions = "SEND_MESSAGES | EMBED_LINKS"
-)]
-pub async fn botstats(ctx: Context<'_>) -> CommandResult {
-    let data = ctx.data();
-    let cache = ctx.cache();
-    let bot_user_id = cache.current_user().id;
-
-    let start_time = std::time::SystemTime::now();
-    let [sep1, sep2, ..] = OPTION_SEPERATORS;
-
-    let guild_ids = cache.guilds();
-    let (total_guild_count, total_voice_clients, total_members) = {
-        let guilds: Vec<_> = guild_ids.iter().filter_map(|id| cache.guild(*id)).collect();
-
-        (
-            guilds.len().to_formatted_string(&Locale::en),
-            guilds
-                .iter()
-                .filter(|g| g.voice_states.contains_key(&bot_user_id))
-                .count()
-                .to_arraystring(),
-            guilds
-                .into_iter()
-                .map(|g| g.member_count)
-                .sum::<u64>()
-                .to_formatted_string(&Locale::en),
-        )
-    };
-
-    let shard_count = cache.shard_count();
-    let ram_usage = {
-        let mut system_info = data.system_info.lock();
-        system_info.refresh_specifics(
-            sysinfo::RefreshKind::nothing()
-                .with_processes(sysinfo::ProcessRefreshKind::nothing().with_memory()),
-        );
-
-        let pid = sysinfo::get_current_pid().unwrap();
-        let process_memory = system_info.process(pid).unwrap().memory();
-
-        (process_memory / 1024 / 1024).to_formatted_string(&Locale::en)
-    };
-
-    let neutral_colour = ctx.neutral_colour().await;
-    let (embed_title, embed_thumbnail) = {
-        let current_user = cache.current_user();
-
-        let title = format!("{}: Freshly rewritten in Rust!", current_user.name);
-        let thumbnail = current_user.face();
-
-        (title, thumbnail)
-    };
-
-    let time_to_fetch = start_time.elapsed()?.as_secs_f64() * 1000.0;
-    let embed = CreateEmbed::default()
-        .title(embed_title)
-        .thumbnail(embed_thumbnail)
-        .url(data.config.main_server_invite.clone())
-        .colour(neutral_colour)
-        .footer(CreateEmbedFooter::new(format!(
-            "Time to fetch: {time_to_fetch:.2}ms
-Support Server: {}
-Repository: https://github.com/Discord-TTS/Bot",
-            data.config.main_server_invite
-        )))
-        .description(format!(
-            "Currently in:
-{sep2} {total_voice_clients} voice channels
-{sep2} {total_guild_count} servers
-Currently using:
-{sep1} {shard_count} shards
-{sep1} {ram_usage}MB of RAM
-and can be used by {total_members} people!",
-        ));
-
-    ctx.send(poise::CreateReply::default().embed(embed)).await?;
-    Ok(())
-}
-
-/// Shows the current setup channel!
-#[poise::command(
-    category = "Extra Commands",
-    guild_only,
-    prefix_command,
-    slash_command,
-    required_bot_permissions = "SEND_MESSAGES"
-)]
-pub async fn channel(ctx: Context<'_>) -> CommandResult {
-    let guild_id = ctx.guild_id().unwrap();
-    let guild_row = ctx.data().guilds_db.get(guild_id.into()).await?;
-
-    let msg = if let Some(channel) = guild_row.channel
-        && require_guild!(ctx).channels.contains_key(&channel)
-    {
-        if channel.widen() == ctx.channel_id() {
-            "You are in the setup channel already!"
-        } else {
-            &aformat!("The current setup channel is: <#{channel}>")
-        }
-    } else {
-        "The channel hasn't been setup, do `/setup #textchannel`"
-    };
-
-    ctx.say(msg).await?;
-    Ok(())
-}
-
-/// Gets current ping to discord!
-#[poise::command(
-    category = "Extra Commands",
-    prefix_command,
-    slash_command,
-    required_bot_permissions = "SEND_MESSAGES",
-    aliases("lag")
-)]
-pub async fn ping(ctx: Context<'_>) -> CommandResult {
-    let ping_before = std::time::SystemTime::now();
-    let ping_msg = ctx.say("Loading!").await?;
-
-    let msg = aformat!("Current Latency: {}ms", ping_before.elapsed()?.as_millis());
-
-    ping_msg
-        .edit(ctx, CreateReply::default().content(msg.as_str()))
-        .await?;
-
-    Ok(())
-}
-
-/// Sends the instructions to invite TTS Bot and join the support server!
-#[poise::command(
-    category = "Extra Commands",
-    prefix_command,
-    slash_command,
-    required_bot_permissions = "SEND_MESSAGES"
-)]
-pub async fn invite(ctx: Context<'_>) -> CommandResult {
-    let data = ctx.data();
-    let bot_id = ctx.cache().current_user().id;
-
-    let components = build_invite_components(bot_id, &data.config.main_server_invite);
-    ctx.send(CreateReply::new().components(std::slice::from_ref(&components)))
-        .await?;
-
-    Ok(())
-}
-
-pub fn commands() -> [Command; 8] {
-    [
-        tts(),
-        uptime(),
-        botstats(),
-        channel(),
-        ping(),
-        invite(),
-        tts_speak(),
-        tts_speak_as(),
-    ]
+pub fn commands() -> [Command; 1] {
+    [tts()]
 }

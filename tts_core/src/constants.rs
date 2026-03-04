@@ -19,7 +19,7 @@ Please keep in mind that we aren't always online and get a lot of messages, so i
 There are some basic rules if you want to get help though:
 `1.` Ask your question, don't just ask for help
 `2.` Don't spam, troll, or send random stuff (including server invites)
-`3.` Many questions are answered in `-help`, try that first (also the default prefix is `-`)
+`3.` Many questions are answered in `^help`, try that first (also the default prefix is `^`)
 ";
 
 pub const DB_SETUP_QUERY: &str = "
@@ -50,7 +50,7 @@ pub const DB_SETUP_QUERY: &str = "
         require_voice   bool        DEFAULT True,
         msg_length      smallint    DEFAULT 30,
         repeated_chars  smallint    DEFAULT 0,
-        prefix          varchar(6)  DEFAULT '-',
+        prefix          varchar(6)  DEFAULT '^',
         required_prefix varchar(6),
         target_lang     varchar(5),
         audience_ignore bool        DEFAULT True,
