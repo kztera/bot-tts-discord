@@ -2,7 +2,7 @@ mod owner;
 mod setup;
 mod voice_paginator;
 
-use std::{borrow::Cow, collections::HashMap, fmt::Write, sync::atomic::Ordering};
+use std::{borrow::Cow, collections::HashMap, fmt::Write};
 
 use aformat::{ToArrayString, aformat};
 use arrayvec::ArrayString;
@@ -12,11 +12,11 @@ use serenity::{Mentionable, builder::*, small_fixed_array::FixedString};
 
 use tts_core::{
     common::{confirm_dialog, random_footer},
-    constants::{GTTS_DISABLED_ERROR, OPTION_SEPERATORS, PREMIUM_NEUTRAL_COLOUR},
+    constants::OPTION_SEPERATORS,
     database::{self, Compact},
     require_guild,
     structs::{
-        ApplicationContext, Command, CommandResult, Context, Data, Error, Result, SpeakingRateInfo,
+        ApplicationContext, Command, CommandResult, Context, Data, Error, Result,
         TTSMode, TTSModeChoice,
     },
     traits::PoiseContextExt,
@@ -253,27 +253,6 @@ async fn voice_autocomplete<'a>(
     )
 }
 
-#[expect(clippy::unused_async)]
-async fn translation_languages_autocomplete<'a>(
-    ctx: ApplicationContext<'a>,
-    searching: &'a str,
-) -> serenity::CreateAutocompleteResponse<'a> {
-    let data = ctx.serenity_context().data_ref::<Data>();
-    let languages = data.translation_languages.iter();
-    let mut filtered_languages: Vec<_> = languages
-        .filter(|(_, name)| name.starts_with(searching))
-        .collect();
-
-    filtered_languages.sort_by_cached_key(|(label, _)| strsim::levenshtein(label, searching));
-    serenity::CreateAutocompleteResponse::new().set_choices(
-        filtered_languages
-            .into_iter()
-            .take(25)
-            .map(|(value, name)| serenity::AutocompleteChoice::new(name, value.as_str()))
-            .collect::<Vec<_>>(),
-    )
-}
-
 async fn bool_button(ctx: Context<'_>, value: Option<bool>) -> Result<Option<bool>, Error> {
     if let Some(value) = value {
         Ok(Some(value))
@@ -283,40 +262,7 @@ async fn bool_button(ctx: Context<'_>, value: Option<bool>) -> Result<Option<boo
 }
 
 enum Target {
-    Guild,
     User,
-}
-
-async fn can_change_mode(
-    ctx: &Context<'_>,
-    mode: Option<TTSMode>,
-    guild_is_premium: bool,
-) -> Result<bool> {
-    let data = ctx.data();
-    let Some(mode) = mode else { return Ok(true) };
-
-    if data.config.gtts_disabled.load(Ordering::Relaxed) && mode == TTSMode::gTTS {
-        ctx.send_error(GTTS_DISABLED_ERROR).await?;
-        return Ok(false);
-    }
-
-    if mode.is_premium() && !guild_is_premium {
-        ctx.send(poise::CreateReply::default().embed(CreateEmbed::default()
-            .title("TTS Bot Premium")
-            .colour(PREMIUM_NEUTRAL_COLOUR)
-            .thumbnail(data.premium_avatar_url.as_str())
-            .footer(CreateEmbedFooter::new(
-                "If this server has purchased premium, please run the `/premium activate` command to link yourself to this server!"
-            ))
-            .description(aformat!("
-                The `{mode}` TTS Mode is only for TTS Bot Premium subscribers, please check out the `/premium info` command!
-            ").as_str())
-        )).await?;
-
-        Ok(false)
-    } else {
-        Ok(true)
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -348,19 +294,14 @@ where
                 .await?;
 
             let name = get_voice_name(&data, &voice, mode).unwrap_or(&voice);
-            Cow::Owned(match target {
-                Target::Guild => format!("Changed the server voice to: {name}"),
-                Target::User => format!("Changed your voice to {name}"),
-            })
+            let _ = target;
+            Cow::Owned(format!("Changed your voice to {name}"))
         } else {
             Cow::Borrowed("Invalid voice, do `/voices`")
         }
     } else {
         voice_db.delete((key, mode)).await?;
-        Cow::Borrowed(match target {
-            Target::Guild => "Reset the server voice",
-            Target::User => "Reset your voice",
-        })
+        Cow::Borrowed("Reset your voice")
     })
 }
 
@@ -396,14 +337,6 @@ fn check_valid_voice(data: &Data, code: &FixedString<u8>, mode: TTSMode) -> bool
             .split_once(' ')
             .and_then(|(language, variant)| data.gcloud_voices.get(language).map(|l| (l, variant)))
             .is_some_and(|(ls, v)| ls.contains_key(v)),
-    }
-}
-
-fn check_prefix(prefix: &str) -> Result<ArrayString<5>, &'static str> {
-    if prefix.len() <= 5 && prefix.matches(' ').count() <= 1 {
-        Ok(ArrayString::from(prefix).unwrap())
-    } else {
-        Err("**Error**: Invalid Prefix, please use 5 or less characters with maximum 1 space")
     }
 }
 
@@ -490,459 +423,6 @@ create_bool_command!(
     "auto_join",
     aliases("auto_join"),
 );
-create_bool_command!(
-    "Makes the bot ignore messages sent by bots and webhooks",
-    botignore,
-    "bot_ignore",
-    aliases("bot_ignore", "ignore_bots", "ignorebots"),
-);
-create_bool_command!(
-    "Makes the bot require people to be in the voice channel to TTS",
-    require_voice,
-    "require_voice",
-    aliases("voice_require", "require_in_vc"),
-);
-create_bool_command!(
-    "Makes the bot ignore messages sent by members of the audience in stage channels",
-    audience_ignore,
-    "audience_ignore",
-    aliases("audienceignore", "ignore_audience", "ignoreaudience"),
-);
-create_bool_command!(
-    "Makes the bot read messages from text-in-voice channels",
-    text_in_voice,
-    "text_in_voice",
-    aliases(),
-);
-create_bool_command!(
-    "Makes the bot skip emoji within messages",
-    skip_emoji,
-    "skip_emoji",
-    aliases("skip_emojis"),
-);
-create_bool_command!(
-    "Makes the bot translate all TTS messages to the same language",
-    translation,
-    "to_translate",
-    aliases("translate", "to_translate", "should_translate"),
-    check = "crate::premium_command_check",
-);
-
-/// Changes the required role to use the bot.
-#[poise::command(
-    guild_only,
-    category = "Settings",
-    prefix_command,
-    slash_command,
-    required_permissions = "ADMINISTRATOR",
-    required_bot_permissions = "SEND_MESSAGES",
-    aliases("required_role", "require_role")
-)]
-pub async fn required_role(
-    ctx: Context<'_>,
-    #[description = "The required role for all bot usage"] required_role: Option<serenity::Role>,
-) -> CommandResult {
-    let guild_id = ctx.guild_id().unwrap();
-    let cache = ctx.cache();
-    let data = ctx.data();
-
-    let currently_required_role = data
-        .guilds_db
-        .get(guild_id.into())
-        .await?
-        .required_role
-        .and_then(|r| {
-            ctx.guild()
-                .and_then(|g| g.roles.get(&r).map(|r| r.name.clone()))
-        });
-
-    let response = {
-        let current_user = cache.current_user();
-        if required_role.is_some() {
-            Some(
-                if let Some(currently_required_role) = currently_required_role {
-                    (
-                        "Are you sure you want to change the required role?",
-                        format!("No, keep {currently_required_role} as the required role."),
-                    )
-                } else {
-                    (
-                        "Are you sure you want to set the required role?",
-                        format!("No, keep {} usable by everyone.", current_user.name),
-                    )
-                },
-            )
-        } else if let Some(currently_required_role) = currently_required_role {
-            Some((
-                "Are you sure you want to remove the required role?",
-                format!(
-                    "No, keep {} restricted to {currently_required_role}.",
-                    current_user.name
-                ),
-            ))
-        } else {
-            None
-        }
-    };
-
-    let Some((question, negative)) = response else {
-        let msg = "**Error:** Cannot reset the required role if there isn't one set!";
-        ctx.say(msg).await?;
-        return Ok(());
-    };
-
-    let Some(response) = confirm_dialog(ctx, question, "Yes, I'm sure.", &negative).await? else {
-        return Ok(());
-    };
-
-    if response {
-        ctx.data()
-            .guilds_db
-            .set_one(
-                guild_id.into(),
-                "required_role",
-                &required_role.as_ref().map(|r| r.id.get() as i64),
-            )
-            .await?;
-
-        let msg: &str = {
-            let bot_name = &cache.current_user().name;
-            if let Some(required_role) = required_role {
-                &aformat!(
-                    "{bot_name} now requires {} to use.",
-                    required_role.mention()
-                )
-            } else {
-                &aformat!("{bot_name} is now usable by everyone!")
-            }
-        };
-
-        ctx.say(msg).await
-    } else {
-        ctx.say("Cancelled!").await
-    }?;
-
-    Ok(())
-}
-
-/// Changes the required prefix for TTS.
-#[poise::command(
-    guild_only,
-    category = "Settings",
-    prefix_command,
-    slash_command,
-    required_permissions = "ADMINISTRATOR",
-    required_bot_permissions = "SEND_MESSAGES",
-    aliases("required_role", "require_role")
-)]
-async fn required_prefix(
-    ctx: Context<'_>,
-    #[description = "The required prefix for TTS"] tts_prefix: Option<String>,
-) -> CommandResult {
-    // Fix up some people being a little silly.
-    let mistakes = ["none", "null", "true", "false"];
-    let prefix = match tts_prefix.as_deref().map(check_prefix) {
-        None => None,
-        Some(Ok(p)) if mistakes.contains(&p.as_str()) => None,
-        Some(Ok(p)) => Some(p),
-        Some(Err(err)) => {
-            ctx.say(err).await?;
-            return Ok(());
-        }
-    };
-
-    let guild_id = ctx.guild_id().unwrap();
-    ctx.data()
-        .guilds_db
-        .set_one(guild_id.into(), "required_prefix", &tts_prefix)
-        .await?;
-
-    let msg = if let Some(tts_prefix) = prefix {
-        &aformat!("The required prefix for TTS is now: {tts_prefix}")
-    } else {
-        "Reset your required prefix."
-    };
-
-    ctx.say(msg).await?;
-    Ok(())
-}
-
-/// Changes the default mode for TTS that messages are read in
-#[poise::command(
-    guild_only,
-    category = "Settings",
-    prefix_command,
-    slash_command,
-    required_permissions = "ADMINISTRATOR",
-    required_bot_permissions = "SEND_MESSAGES | EMBED_LINKS",
-    aliases("server_voice_mode", "server_tts_mode", "server_ttsmode")
-)]
-pub async fn server_mode(
-    ctx: Context<'_>,
-    #[description = "The TTS Mode to change to"] mode: Option<TTSModeChoice>,
-) -> CommandResult {
-    let data = ctx.data();
-    let guild_id = ctx.guild_id().unwrap();
-
-    let mode = mode.map(TTSMode::from);
-    let guild_is_premium = data.is_premium_simple(ctx.http(), guild_id).await?;
-    if !can_change_mode(&ctx, mode, guild_is_premium).await? {
-        return Ok(());
-    }
-
-    data.guilds_db
-        .set_one(guild_id.into(), "voice_mode", mode)
-        .await?;
-
-    let response = if let Some(mode) = mode {
-        &aformat!("Set your server's voice mode to: {mode}")
-    } else {
-        "Reset your server's voice mode"
-    };
-
-    ctx.say(response).await?;
-    Ok(())
-}
-
-/// Changes the default language messages are read in
-#[poise::command(
-    guild_only,
-    category = "Settings",
-    prefix_command,
-    slash_command,
-    required_permissions = "ADMINISTRATOR",
-    required_bot_permissions = "SEND_MESSAGES",
-    aliases(
-        "defaultlang",
-        "default_lang",
-        "defaultlang",
-        "slang",
-        "serverlanguage"
-    )
-)]
-pub async fn server_voice(
-    ctx: Context<'_>,
-    #[description = "The default voice to read messages in"]
-    #[autocomplete = "voice_autocomplete"]
-    #[rest]
-    voice: String,
-) -> CommandResult {
-    let data = ctx.data();
-    let guild_id = ctx.guild_id().unwrap();
-
-    let to_send = change_voice(
-        &ctx,
-        &data.guilds_db,
-        &data.guild_voice_db,
-        ctx.author().id,
-        guild_id,
-        guild_id.into(),
-        Some(FixedString::from_string_trunc(voice)),
-        Target::Guild,
-    )
-    .await?;
-
-    ctx.say(to_send).await?;
-    Ok(())
-}
-
-/// Changes the target language for translation
-#[poise::command(
-    guild_only,
-    category = "Settings",
-    check = "crate::premium_command_check",
-    prefix_command,
-    slash_command,
-    required_permissions = "ADMINISTRATOR",
-    required_bot_permissions = "SEND_MESSAGES | EMBED_LINKS",
-    aliases("tlang", "tvoice", "target_lang", "target_voice", "target_language")
-)]
-pub async fn translation_lang(
-    ctx: Context<'_>,
-    #[description = "The language to translate all TTS messages to"]
-    #[autocomplete = "translation_languages_autocomplete"]
-    target_lang: Option<String>,
-) -> CommandResult {
-    let data = ctx.data();
-    let guild_id = ctx.guild_id().unwrap().into();
-
-    let to_say = if target_lang.as_ref().is_none_or(|target_lang| {
-        data.translation_languages
-            .contains_key(target_lang.as_str())
-    }) {
-        data.guilds_db
-            .set_one(guild_id, "target_lang", &target_lang)
-            .await?;
-        if let Some(target_lang) = target_lang {
-            let mut to_say = format!("The target translation language is now: `{target_lang}`");
-            if !data.guilds_db.get(guild_id).await?.to_translate() {
-                to_say.push_str("\nYou may want to enable translation with `/set translation on`");
-            }
-
-            Cow::Owned(to_say)
-        } else {
-            Cow::Borrowed("Reset the target translation language")
-        }
-    } else {
-        Cow::Borrowed("Invalid translation language, do `/translation_languages`")
-    };
-
-    ctx.say(to_say).await?;
-    Ok(())
-}
-
-/// Changes the prefix used before commands
-#[poise::command(
-    guild_only,
-    category = "Settings",
-    prefix_command,
-    required_permissions = "ADMINISTRATOR",
-    required_bot_permissions = "SEND_MESSAGES"
-)]
-pub async fn command_prefix(
-    ctx: Context<'_>,
-    #[description = "The prefix to be used before commands"]
-    #[rest]
-    prefix: String,
-) -> CommandResult {
-    let to_send = match check_prefix(&prefix) {
-        Err(err) => err,
-        Ok(prefix) => {
-            ctx.data()
-                .guilds_db
-                .set_one(ctx.guild_id().unwrap().into(), "prefix", prefix.as_str())
-                .await?;
-
-            &aformat!("Command prefix for this server is now: {prefix}")
-        }
-    };
-
-    ctx.say(to_send).await?;
-    Ok(())
-}
-
-/// Changes the max repetion of a character (0 = off)
-#[poise::command(
-    guild_only,
-    category = "Settings",
-    prefix_command,
-    slash_command,
-    required_permissions = "ADMINISTRATOR",
-    required_bot_permissions = "SEND_MESSAGES",
-    aliases("repeated_chars", "repeated_letters", "chars")
-)]
-pub async fn repeated_characters(
-    ctx: Context<'_>,
-    #[description = "The max repeated characters"] chars: u8,
-) -> CommandResult {
-    let to_send = if chars > 100 {
-        "**Error**: Cannot set the max repeated characters above 100"
-    } else if chars < 5 && chars != 0 {
-        "**Error**: Cannot set the max repeated characters below 5"
-    } else {
-        let guild_id = ctx.guild_id().unwrap().into();
-        ctx.data()
-            .guilds_db
-            .set_one(guild_id, "repeated_chars", &(chars as i16))
-            .await?;
-
-        &aformat!("Max repeated characters is now: {chars}")
-    };
-
-    ctx.say(to_send).await?;
-    Ok(())
-}
-
-/// Changes the max length of a TTS message in seconds
-#[poise::command(
-    guild_only,
-    category = "Settings",
-    prefix_command,
-    slash_command,
-    required_permissions = "ADMINISTRATOR",
-    required_bot_permissions = "SEND_MESSAGES",
-    aliases("max_length", "message_length")
-)]
-pub async fn msg_length(
-    ctx: Context<'_>,
-    #[description = "Max length of TTS message in seconds"] seconds: u8,
-) -> CommandResult {
-    let to_send = if seconds > 60 {
-        "**Error**: Cannot set the max length of messages above 60 seconds"
-    } else if seconds < 10 {
-        "**Error**: Cannot set the max length of messages below 10 seconds"
-    } else {
-        ctx.data()
-            .guilds_db
-            .set_one(
-                ctx.guild_id().unwrap().into(),
-                "msg_length",
-                &(seconds as i16),
-            )
-            .await?;
-
-        &aformat!("Max message length is now: {seconds} seconds")
-    };
-
-    ctx.say(to_send).await?;
-    Ok(())
-}
-
-/// Changes the multiplier for how fast to speak
-#[poise::command(
-    category = "Settings",
-    prefix_command,
-    slash_command,
-    required_bot_permissions = "SEND_MESSAGES",
-    aliases(
-        "speed",
-        "speed_multiplier",
-        "speaking_rate_multiplier",
-        "speaking_speed",
-        "tts_speed"
-    )
-)]
-pub async fn speaking_rate(
-    ctx: Context<'_>,
-    #[description = "The speed to speak at"]
-    #[min = 0]
-    #[max = 400.0]
-    speaking_rate: f32,
-) -> CommandResult {
-    let data = ctx.data();
-    let author = ctx.author();
-
-    let (_, mode) = data
-        .parse_user_or_guild(ctx.http(), author.id, ctx.guild_id())
-        .await?;
-    let Some(speaking_rate_info) = mode.speaking_rate_info() else {
-        let msg = aformat!("**Error**: Cannot set speaking rate for the {mode} mode");
-        ctx.say(&*msg).await?;
-        return Ok(());
-    };
-
-    let kind = speaking_rate_info.kind();
-    let SpeakingRateInfo { min, max, .. } = speaking_rate_info;
-    let to_send: &str = if speaking_rate > max {
-        &aformat!("**Error**: Cannot set the speaking rate multiplier above {max}{kind}")
-    } else if speaking_rate < min {
-        &aformat!("**Error**: Cannot set the speaking rate multiplier below {min}{kind}")
-    } else {
-        data.userinfo_db.create_row(author.id.get() as i64).await?;
-        data.user_voice_db
-            .set_one(
-                (author.id.get() as i64, mode),
-                "speaking_rate",
-                &speaking_rate,
-            )
-            .await?;
-
-        &aformat!("Your speaking rate is now: {speaking_rate}{kind}")
-    };
-
-    ctx.say(to_send).await?;
-    Ok(())
-}
 
 /// Replaces your username in "<user> said" with a given name
 #[poise::command(
@@ -997,50 +477,6 @@ pub async fn nick(
     Ok(())
 }
 
-/// Changes the voice mode that messages are read in for you
-#[poise::command(
-    guild_only,
-    category = "Settings",
-    prefix_command,
-    slash_command,
-    required_bot_permissions = "SEND_MESSAGES | EMBED_LINKS",
-    aliases("voice_mode", "tts_mode", "ttsmode")
-)]
-pub async fn mode(
-    ctx: Context<'_>,
-    #[description = "The TTS Mode to change to, leave blank for server default"] mode: Option<
-        TTSModeChoice,
-    >,
-) -> CommandResult {
-    let data = ctx.data();
-    let guild_id = ctx.guild_id().unwrap();
-
-    let mode = mode.map(TTSMode::from);
-    let guild_is_premium = data.is_premium_simple(ctx.http(), guild_id).await?;
-    if !can_change_mode(&ctx, mode, guild_is_premium).await? {
-        return Ok(());
-    }
-
-    let key = if guild_is_premium {
-        "premium_voice_mode"
-    } else {
-        "voice_mode"
-    };
-
-    data.userinfo_db
-        .set_one(ctx.author().id.into(), key, mode)
-        .await?;
-
-    let response = if let Some(mode) = mode {
-        &aformat!("Set your voice mode to: {mode}")
-    } else {
-        "Reset your voice mode"
-    };
-
-    ctx.say(response).await?;
-    Ok(())
-}
-
 /// Changes the voice your messages are read in, full list in `/voices`
 #[poise::command(
     guild_only,
@@ -1074,49 +510,6 @@ pub async fn voice(
     .await?;
 
     ctx.say(to_send).await?;
-    Ok(())
-}
-
-/// Lists all the languages that TTS bot accepts for Deepl translation
-#[poise::command(
-    category = "Settings",
-    prefix_command,
-    slash_command,
-    aliases("trans_langs", "translation_langs"),
-    required_bot_permissions = "SEND_MESSAGES | EMBED_LINKS"
-)]
-pub async fn translation_languages(ctx: Context<'_>) -> CommandResult {
-    let data = ctx.data();
-    let author = ctx.author();
-    let neutral_colour = ctx.neutral_colour().await;
-
-    let (embed_title, client_id) = {
-        let current_user = ctx.cache().current_user();
-        (
-            &aformat!("{} Translation Languages", &current_user.name),
-            current_user.id,
-        )
-    };
-
-    ctx.send(
-        poise::CreateReply::default().embed(
-            CreateEmbed::default()
-                .title(embed_title.as_str())
-                .colour(neutral_colour)
-                .field(
-                    "Currently Supported Languages",
-                    format_languages(data.translation_languages.keys()),
-                    false,
-                )
-                .author(CreateEmbedAuthor::new(&*author.name).icon_url(author.face()))
-                .footer(CreateEmbedFooter::new(random_footer(
-                    &data.config.main_server_invite,
-                    client_id,
-                ))),
-        ),
-    )
-    .await?;
-
     Ok(())
 }
 

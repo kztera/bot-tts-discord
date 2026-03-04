@@ -1,17 +1,14 @@
 use aformat::{aformat, astr};
 use anyhow::Error;
 
-use poise::{
-    CreateReply,
-    serenity_prelude::{self as serenity, builder::*},
-};
+use poise::serenity_prelude as serenity;
+use poise::CreateReply;
 
 use aformat::ToArrayString;
 use tts_core::{
     common::{fetch_audio, prepare_url},
     opt_ext::OptionTryUnwrap,
     structs::{Command, CommandResult, Context, IsPremium, TTSMode},
-    traits::PoiseContextExt as _,
 };
 
 /// Generates TTS and sends it in the current text channel!

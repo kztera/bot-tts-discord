@@ -10,7 +10,7 @@ use poise::serenity_prelude as serenity;
 use serenity::small_fixed_array::FixedString;
 
 use tts_core::{
-    analytics, create_db_handler,
+    analytics, create_db_handler, database,
     structs::{Data, RegexCache, Result, TTSMode},
 };
 use tts_events::EventHandler;
