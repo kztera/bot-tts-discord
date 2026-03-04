@@ -156,7 +156,6 @@ fn generate_channel_select(text_channels: &[ChannelMenuEntry]) -> Vec<CreateComp
     category = "Settings",
     prefix_command,
     slash_command,
-    required_permissions = "ADMINISTRATOR",
     required_bot_permissions = "SEND_MESSAGES | EMBED_LINKS"
 )]
 

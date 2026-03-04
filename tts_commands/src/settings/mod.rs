@@ -394,7 +394,6 @@ macro_rules! create_bool_command {
                 category="Settings",
                 aliases($($aliases,)*),
                 guild_only, slash_command,
-                required_permissions="ADMINISTRATOR",
                 required_bot_permissions="SEND_MESSAGES",
                 $($extra)*
             )]
