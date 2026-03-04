@@ -1,8 +1,7 @@
 mod owner;
 mod setup;
-mod voice_paginator;
 
-use std::{borrow::Cow, collections::HashMap, fmt::Write};
+use std::borrow::Cow;
 
 use aformat::{ToArrayString, aformat};
 use arrayvec::ArrayString;
@@ -16,25 +15,27 @@ use tts_core::{
     database::{self, Compact},
     require_guild,
     structs::{
-        ApplicationContext, Command, CommandResult, Context, Data, Error, Result,
-        TTSMode, TTSModeChoice,
+        ApplicationContext, Command, CommandResult, Context, Data, Error, Result, TTSMode,
     },
     traits::PoiseContextExt,
 };
 
-use self::voice_paginator::MenuPaginator;
 
 fn format_voice<'a>(data: &Data, voice: &'a str, mode: TTSMode) -> Cow<'a, str> {
     if mode == TTSMode::gCloud {
-        let (lang, variant) = voice.split_once(' ').unwrap();
-        let gender = &data.gcloud_voices[lang][variant];
-        Cow::Owned(format!("{lang} - {variant} ({gender})"))
+        if let Some((lang, variant)) = voice.split_once(' ') {
+            if let Some(variants) = data.gcloud_voices.get(lang) {
+                if let Some(gender) = variants.get(variant) {
+                    return Cow::Owned(format!("{lang} - {variant} ({gender})"));
+                }
+            }
+        }
+        Cow::Borrowed(voice)
     } else if mode == TTSMode::Polly {
-        let voice = &data.polly_voices[voice];
-        Cow::Owned(format!(
-            "{} - {} ({})",
-            voice.name, voice.language_name, voice.gender
-        ))
+        if let Some(v) = data.polly_voices.get(voice) {
+            return Cow::Owned(format!("{} - {} ({})", v.name, v.language_name, v.gender));
+        }
+        Cow::Borrowed(voice)
     } else {
         Cow::Borrowed(voice)
     }
@@ -512,7 +513,7 @@ pub async fn voice(
     Ok(())
 }
 
-/// Lists all the voices that TTS bot accepts for the current mode
+/// Lists all the voices that TTS bot accepts
 #[poise::command(
     category = "Settings",
     aliases("langs", "languages"),
@@ -520,45 +521,14 @@ pub async fn voice(
     slash_command,
     required_bot_permissions = "SEND_MESSAGES | EMBED_LINKS"
 )]
-pub async fn voices(
-    ctx: Context<'_>,
-    #[description = "The mode to see the voices for, leave blank for current"] mode: Option<
-        TTSModeChoice,
-    >,
-) -> CommandResult {
+pub async fn voices(ctx: Context<'_>) -> CommandResult {
     let data = ctx.data();
-    let http = ctx.http();
     let cache = ctx.cache();
     let author = ctx.author();
-    let guild_id = ctx.guild_id();
 
-    let mode = match mode {
-        Some(mode) => TTSMode::from(mode),
-        None => data.parse_user_or_guild(http, author.id, guild_id).await?.1,
-    };
+    let mode = TTSMode::gTTS;
 
-    let voices = {
-        let run_paginator = |current_voice, pages| async {
-            let footer = random_footer(&data.config.main_server_invite, cache.current_user().id);
-
-            let paginator = MenuPaginator::new(ctx, pages, current_voice, mode, footer);
-            paginator.start().await?;
-            Ok(())
-        };
-
-        match mode {
-            TTSMode::gTTS => format_languages(data.gtts_voices.keys()),
-            TTSMode::eSpeak => format_languages(data.espeak_voices.iter()),
-            TTSMode::Polly => {
-                let (current_voice, pages) = list_polly_voices(&ctx).await?;
-                return run_paginator(current_voice, pages).await;
-            }
-            TTSMode::gCloud => {
-                let (current_voice, pages) = list_gcloud_voices(&ctx).await?;
-                return run_paginator(current_voice, pages).await;
-            }
-        }
-    };
+    let voices = format_languages(data.gtts_voices.keys());
 
     let user_voice_row = data.user_voice_db.get((author.id.into(), mode)).await?;
 
@@ -589,80 +559,6 @@ pub async fn voices(
     .await?;
 
     Ok(())
-}
-
-async fn list_polly_voices(ctx: &Context<'_>) -> Result<(String, Vec<String>)> {
-    let data = ctx.data();
-
-    let (voice_id, mode) = data
-        .parse_user_or_guild(ctx.http(), ctx.author().id, ctx.guild_id())
-        .await?;
-    let voice = match mode {
-        TTSMode::Polly => {
-            let voice_id: &str = &voice_id;
-            &data.polly_voices[voice_id]
-        }
-        _ => &data.polly_voices[TTSMode::Polly.default_voice()],
-    };
-
-    let mut lang_to_voices: HashMap<_, Vec<_>> = HashMap::new();
-    for voice in data.polly_voices.values() {
-        lang_to_voices
-            .entry(&voice.language_name)
-            .or_default()
-            .push(voice);
-    }
-
-    let pages = lang_to_voices
-        .into_values()
-        .map(|voices| {
-            let mut buf = String::with_capacity(voices.len() * 12);
-            for voice in voices {
-                writeln!(
-                    buf,
-                    "{} - {} ({})",
-                    voice.id, voice.language_name, voice.gender
-                )?;
-            }
-
-            anyhow::Ok(buf)
-        })
-        .collect::<Result<_>>()?;
-
-    Ok((
-        format!("{} - {} ({})", voice.id, voice.language_name, voice.gender),
-        pages,
-    ))
-}
-
-async fn list_gcloud_voices(ctx: &Context<'_>) -> Result<(String, Vec<String>)> {
-    let data = ctx.data();
-
-    let (lang_variant, mode) = data
-        .parse_user_or_guild(ctx.http(), ctx.author().id, ctx.guild_id())
-        .await?;
-    let (lang, variant) = match mode {
-        TTSMode::gCloud => &lang_variant,
-        _ => TTSMode::gCloud.default_voice(),
-    }
-    .split_once(' ')
-    .unwrap();
-
-    let pages = data
-        .gcloud_voices
-        .iter()
-        .map(|(language, variants)| {
-            let mut buf = String::with_capacity(variants.len() * 12);
-            for (variant, gender) in variants {
-                writeln!(buf, "{language} {variant} ({gender})")?;
-            }
-
-            anyhow::Ok(buf)
-        })
-        .collect::<Result<_>>()?;
-
-    let gender = data.gcloud_voices[lang][variant];
-    Ok((format!("{lang} {variant} ({gender})"), pages))
 }
 
 pub fn commands() -> [Command; 4] {
